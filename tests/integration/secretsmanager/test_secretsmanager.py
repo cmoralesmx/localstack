@@ -164,6 +164,8 @@ class TestSecretsManager:
         )
         sm_snapshot.match("delete_secret_res_1", delete_secret_res_1)
 
+    # @pytest.mark.skip("'ReplicateSecretToRegions' not yet implemented or pro feature")
+    # @pytest.mark.parametrize("replica_region",["us-east-2"])
     def test_secret_not_found(self, sm_client, sm_snapshot):
         with pytest.raises(Exception) as not_found:
             sm_client.get_secret_value(SecretId=f"s-{short_uid()}")
@@ -175,8 +177,8 @@ class TestSecretsManager:
 
         with pytest.raises(Exception) as not_found:
             sm_client.replicate_secret_to_regions(SecretId=f"s-{short_uid()}",
-                                                  AddReplicaRegions=[{'Region':'us-east-2'}])
-        sm_snapshot.match("resource_not_found_ex", not_found.value.response)
+                                                  AddReplicaRegions=[{"Region": "us-east-2"}])
+        sm_snapshot.match("replicate_secret_to_regions_not_found_ex", not_found.value.response)
 
     def test_call_lists_secrets_multiple_times(self, sm_client, secret_name):
         sm_client.create_secret(
@@ -290,79 +292,78 @@ class TestSecretsManager:
         assert len(random_password["RandomPassword"]) == 120
         assert all(c not in "xyzDje@?!." for c in random_password["RandomPassword"])
 
+    replication_test_data_0 = [("us-east-1", "us-east-2")]
     replication_test_data_1 = [("us-east-1", "us-east-2", "us-west-1")]
 
-    @pytest.mark.parametrize("region_1,replicate_region_1", replication_test_data_1)
-    def test_create_secret_new_name_in_region(self, sm_client, sm_snapshot, region_1, replicate_region_1):
+    #@pytest.mark.skip("Not implemented")
+    @pytest.mark.parametrize("region_1,replicate_region_1", replication_test_data_0)
+    def test_create_secret_new_name_in_region(self, region_1, replicate_region_1, sm_client, sm_snapshot):
         """
         1.1 The new secret should be created and replicated without problems
         """
         secret_name = f"{short_uid()}"
-        create_secret_replicated = sm_client.create_secret(
+        create_secret_replicated_rs0 = sm_client.create_secret(
             Name=secret_name,
             SecretString=secret_name,
-            Region=region_1,
-            AddReplicaRegions=[{"Region": replicate_region_1}]
+            AddReplicaRegions=[{"Region": replicate_region_1}, ],
         )
         sm_snapshot.add_transformers_list(
-            sm_snapshot.transform.secretsmanager_secret_id_arn(create_secret_replicated, 0)
+            sm_snapshot.transform.secretsmanager_secret_id_arn(create_secret_replicated_rs0, 0)
         )
-        sm_snapshot.match("create_secret_replicated", create_secret_replicated)
+        sm_snapshot.match("create_secret_replicated_rs0", create_secret_replicated_rs0)
         # wait for the replication to complete
         self._wait_created_is_listed(sm_client, secret_id=secret_name)
-        describe_secret_res = sm_snapshot.describe_secret(SecretId=secret_name)
+        describe_secret_rs0 = sm_client.describe_secret(SecretId=secret_name)
 
-        for replication_status in describe_secret_res.Replication_Status:
-            if replication_status.Region == region_1:
-                assert replication_status.Status != "Failed"
+        for replication_status in describe_secret_rs0["ReplicationStatus"]:
+            if replication_status.Region == replicate_region_1:
+                assert replication_status.Status == "InSync"
         # cleanup
-        delete_secret_res = sm_client.delete_secret(
+        delete_secret_res0 = sm_client.delete_secret(
             SecretId=secret_name, ForceDeleteWithoutRecovery=True
         )
-        sm_snapshot.match("delete_secret_res", delete_secret_res)
+        sm_snapshot.match("delete_secret_res0", delete_secret_res0)
 
-    @pytest.mark.parametrize("region_1,replica_region_1,region2", replication_test_data_1)
-    def test_create_secret_secret_name_already_exists(self, sm_client, sm_snapshot, region_1, replica_region_1):
+    @pytest.mark.parametrize("region_1,replica_region_1", replication_test_data_0)
+    def test_create_secret_secret_name_already_exists(self, region_1, replica_region_1, sm_client, sm_snapshot):
         """
         1.2 Should raise an exception the secret already exists
+        Seems like
         """
         secret_name = f"{short_uid()}"
-        create_secret_replicated = sm_client.create_secret(
+        create_secret_replicated_rs0 = sm_client.create_secret(
             Name=secret_name,
             SecretString=secret_name,
-            Region=region_1,
-            AddReplicaRegions=[{"Region": replica_region_1}]
+            # Region=region_1,
+            # AddReplicaRegions=[{"Region": replica_region_1}]
         )
         sm_snapshot.add_transformers_list(
-            sm_snapshot.transform.secretsmanager_secret_id_arn(create_secret_replicated, 0)
+            sm_snapshot.transform.secretsmanager_secret_id_arn(create_secret_replicated_rs0, 0)
         )
-        sm_snapshot.match("create_secret_replicated", create_secret_replicated)
+        sm_snapshot.match("create_secret_replicated_rs0", create_secret_replicated_rs0)
         # wait for the replication to complete
         self._wait_created_is_listed(sm_client, secret_id=secret_name)
         describe_secret_res = sm_snapshot.describe_secret(SecretId=secret_name)
-
-        for replication_status in describe_secret_res.Replication_Status:
-            assert replication_status.Status != "Failed"
 
         # Repeat the creation request to trigger the exception
         with pytest.raises(Exception) as already_exists:
             create_secret_replicated = sm_client.create_secret(
                 Name=secret_name,
                 SecretString=secret_name,
-                Region=region_1,
-                AddReplicaRegions=[{"Region": replica_region_1}]
+                # Region=region_1,
+                # AddReplicaRegions=[{"Region": replica_region_1}]
             )
-        sm_snapshot.match("resource_exists_ex", already_exists.value.response)
 
         # cleanup
-        delete_secret_res = sm_client.delete_secret(
+        delete_secret_rs0 = sm_client.delete_secret(
             SecretId=secret_name, ForceDeleteWithoutRecovery=True
         )
-        sm_snapshot.match("delete_secret_res", delete_secret_res)
+        sm_snapshot.match("delete_secret_rs0", delete_secret_rs0)
 
-    @pytest.mark.parametrize("region_1,replica_region_1,region2", replication_test_data_1)
-    def test_create_secret_secret_name_already_exists_in_replica(self, sm_client, sm_snapshot,
-                                                                 region_1, replica_region_1, region_2):
+    @pytest.mark.skip("CANNOT create secrets in regions different from the default one")
+    @pytest.mark.parametrize("region_1,replica_region_1,region_2", replication_test_data_1)
+    def test_create_secret_secret_name_already_exists_in_replica(self, region_1, replica_region_1,
+                                                                 region_2, sm_client, sm_snapshot):
         """
         1.3 Create secret in region1 replicated to region2.
         Then, create secret in region 3 replicated to region2.
@@ -371,62 +372,66 @@ class TestSecretsManager:
         "StatusMessage": "Replication failed: Secret name {NAME} already exists in region {REGION}."
         """
         secret_name = f"{short_uid()}"
-        create_secret_replicated1 = sm_client.create_secret(
+        create_secret_replicated_rs0 = sm_client.create_secret(
             Name=secret_name,
             SecretString=secret_name,
-            Region=region_1,
+            # Region=region_1,
             AddReplicaRegions=[{"Region": replica_region_1}]
         )
         sm_snapshot.add_transformers_list(
-            sm_snapshot.transform.secretsmanager_secret_id_arn(create_secret_replicated1, 0)
+            sm_snapshot.transform.secretsmanager_secret_id_arn(create_secret_replicated_rs0, 0)
         )
-        sm_snapshot.match("create_secret_replicated", create_secret_replicated1)
+        sm_snapshot.match("create_secret_replicated_rs0", create_secret_replicated_rs0)
+
         # wait for the replication to complete
         self._wait_created_is_listed(sm_client, secret_id=secret_name)
-        describe_secret_res1 = sm_snapshot.describe_secret(SecretId=secret_name, Region=region_1)
+        describe_secret_rs0 = sm_client.describe_secret(SecretId=secret_name)
 
-        for replication_status in describe_secret_res1.Replication_Status:
+        for replication_status in describe_secret_rs0.ReplicationStatus:
             if replication_status.Region == region_2:
                 assert replication_status.Status != "Failed"
 
-        create_secret_replicated2 = sm_client.create_secret(
+        create_secret_replicated_rs1 = sm_client.create_secret(
             Name=secret_name,
             SecretString=secret_name,
-            Region=region_2,
+            # Region=region_2,
             AddReplicaRegions=[{"Region": replica_region_1}]
         )
-        sm_snapshot.match("create_secret_replicated", create_secret_replicated2)
+        sm_snapshot.add_transformers_list(
+            sm_snapshot.transform.secretsmanager_secret_id_arn(create_secret_replicated_rs1, 1)
+        )
+        sm_snapshot.match("create_secret_replicated_rs1", create_secret_replicated_rs1)
 
         # wait for the replication to complete
         self._wait_created_is_listed(sm_client, secret_id=secret_name)
-        describe_secret_res2 = sm_snapshot.describe_secret(SecretId=secret_name, Region=region_2)
+        describe_secret_rs1 = sm_snapshot.describe_secret(SecretId=secret_name, Region=region_2)
 
         # must check `us-east-1` Status == Failed
-        for replication_status in describe_secret_res2.Replication_Status:
+        for replication_status in describe_secret_rs1.ReplicationStatus:
             if replication_status.Region == replica_region_1:
                 assert replication_status.Status == "Failed"
 
         # cleanup
         remove_regions_res1 = sm_client.remove_regions_from_replication(
                 SecretId=secret_name,
-                Region=region_1,
+                # Region=region_1,
                 RemoveReplicaRegion=replica_region_1)
         sm_snapshot.match("remove_regions_res1", remove_regions_res1)
 
         delete_secret_res1 = sm_client.delete_secret(
             SecretId=secret_name, ForceDeleteWithoutRecovery=True,
-            Region=region_1
+            # Region=region_1
         )
         sm_snapshot.match("delete_secret_res1", delete_secret_res1)
 
         remove_regions_res2 = sm_client.remove_regions_from_replication(
                 SecretId=secret_name,
-                Region=region_2,
+                # Region=region_2,
                 RemoveReplicaRegion=replica_region_1)
         sm_snapshot.match("remove_regions_res2", remove_regions_res2)
         delete_secret_res2 = sm_client.delete_secret(
             SecretId=secret_name, ForceDeleteWithoutRecovery=True,
-            Region=region_2
+            # Region=region_2
         )
         sm_snapshot.match("delete_secret_res2", delete_secret_res2)
 
@@ -435,10 +440,10 @@ class TestSecretsManager:
             ("us-east-1", "us-east-2", "us-west-1", "us-east-1", "to other region(s).")
             ]
 
-    @pytest.mark.paramterize("region_1,replica_region_1,region_2,replica_region_2,suffix",
+    @pytest.mark.parametrize("region_1,replica_region_1,region_2,replica_region_2,suffix",
                              replication_test_data_2, ids=["from", "to"])
     def test_create_secret_secret_name_already_exists_in_replica_regions_force_overwrite(
-            self, sm_client, sm_snapshot, region_1, replica_region_1, region_2, replica_region_2, suffix):
+            self, region_1, replica_region_1, region_2, replica_region_2, suffix, sm_client, sm_snapshot):
         """
         1.4 Create secret in region1 replicated to region2.
         Then, create secret in region 3 replicated to region2.
@@ -457,7 +462,7 @@ class TestSecretsManager:
         create_secret_replicated1 = sm_client.create_secret(
             Name=secret_name,
             SecretString=secret_name,
-            Region=region_1,
+            # Region=region_1,
             AddReplicaRegions=[{"Region": replica_region_1}]
         )
         sm_snapshot.add_transformers_list(
@@ -475,7 +480,7 @@ class TestSecretsManager:
         create_secret_replicated2 = sm_client.create_secret(
             Name=secret_name,
             SecretString=secret_name,
-            Region=region_2,
+            # Region=region_2,
             AddReplicaRegions=[{"Region": replica_region_2}]
         )
         sm_snapshot.match("create_secret_replicated", create_secret_replicated2)
@@ -495,40 +500,40 @@ class TestSecretsManager:
         # cleanup
         remove_regions_res1 = sm_client.remove_regions_from_replication(
                 SecretId=secret_name,
-                Region=region_1,
+                # Region=region_1,
                 RemoveReplicaRegion=replica_region_1)
         sm_snapshot.match("remove_regions_res1", remove_regions_res1)
 
         delete_secret_res1 = sm_client.delete_secret(
             SecretId=secret_name, ForceDeleteWithoutRecovery=True,
-            Region=region_1
+            # Region=region_1
         )
         sm_snapshot.match("delete_secret_res1", delete_secret_res1)
 
         remove_regions_res2 = sm_client.remove_regions_from_replication(
                 SecretId=secret_name,
-                Region=region_2,
+                # Region=region_2,
                 RemoveReplicaRegion=replica_region_2)
         sm_snapshot.match("remove_regions_res2", remove_regions_res2)
         delete_secret_res2 = sm_client.delete_secret(
             SecretId=secret_name, ForceDeleteWithoutRecovery=True,
-            Region=region_2
+            # Region=region_2
         )
         sm_snapshot.match("delete_secret_res2", delete_secret_res2)
 
-    def test_add_replication_secret_name_exists_only_in_region(self):
+    def test_replicate_secret_name_exists_only_in_region(self):
         """
         2.2 The secret exists only in region, replication must succeed
         """
         pass
 
-    def test_add_replication_secret_name_exists_in_replica_regions(self):
+    def test_replicate_secret_name_exists_in_replica_regions(self):
         pass
 
-    def test_add_replication_secret_name_exists_as_replica_to_regions_force_overwrite(self):
+    def test_replicate_secret_name_exists_as_replica_to_regions_force_overwrite(self):
         pass
 
-    def test_add_replication_secret_name_exists_as_replica_from_region_force_overwrite(self):
+    def test_replicate_secret_name_exists_as_replica_from_region_force_overwrite(self):
         pass
 
 
